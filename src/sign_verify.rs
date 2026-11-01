@@ -11,6 +11,9 @@ use super::error::RsshErr;
 
 type ErrType = Box<dyn std::error::Error>;
 
+// FIDO authenticator data flag: user presence was verified (touch)
+const SK_USER_PRESENCE_REQD: u8 = 0x01;
+
 trait ToOpensslKey {
     type OpensslKeyResult;
     fn to_pkey(&self) -> Self::OpensslKeyResult;
@@ -144,6 +147,12 @@ fn preprocess_content_and_sig(
         // regenerate the message as per U2F spec
         PublicKey::SkEcDsa(_) | PublicKey::SkEd25519(_) => {
             let sig: proto::SkSignature = from_bytes(ssh_sig)?;
+            // Require the user-presence (UP) flag, as sshd does unless
+            // no-touch-required is set: reject signatures made without a touch.
+            if sig.flags & SK_USER_PRESENCE_REQD == 0 {
+                warn!("Security key signature lacks user-presence flag");
+                return Err(RsshErr::InvalidSigErr.into_ptr());
+            }
             let app = match pubkey {
                 PublicKey::SkEcDsa(k) => &k.application,
                 PublicKey::SkEd25519(k) => &k.application,
